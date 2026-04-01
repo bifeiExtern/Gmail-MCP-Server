@@ -446,8 +446,27 @@ async function main() {
 
         async function handleEmailAction(action: "send" | "draft", validatedArgs: any) {
             let message: string;
-            
+
             try {
+                // Auto-resolve inReplyTo: if it doesn't look like an RFC Message-ID,
+                // treat it as a Gmail message ID and look up the real Message-ID header
+                if (validatedArgs.inReplyTo && !validatedArgs.inReplyTo.startsWith('<')) {
+                    try {
+                        const msgResponse = await gmail.users.messages.get({
+                            userId: 'me',
+                            id: validatedArgs.inReplyTo,
+                            format: 'metadata',
+                            metadataHeaders: ['Message-ID'],
+                        });
+                        const msgHeaders = msgResponse.data.payload?.headers || [];
+                        const rfcMessageId = msgHeaders.find((h: any) => h.name?.toLowerCase() === 'message-id')?.value;
+                        if (rfcMessageId) {
+                            validatedArgs.inReplyTo = rfcMessageId;
+                        }
+                    } catch (e) {
+                        // If lookup fails, keep original value
+                    }
+                }
                 // Check if we have attachments
                 if (validatedArgs.attachments && validatedArgs.attachments.length > 0) {
                     // Use Nodemailer to create properly formatted RFC822 message
@@ -617,7 +636,9 @@ async function main() {
                     const subject = headers.find(h => h.name?.toLowerCase() === 'subject')?.value || '';
                     const from = headers.find(h => h.name?.toLowerCase() === 'from')?.value || '';
                     const to = headers.find(h => h.name?.toLowerCase() === 'to')?.value || '';
+                    const cc = headers.find(h => h.name?.toLowerCase() === 'cc')?.value || '';
                     const date = headers.find(h => h.name?.toLowerCase() === 'date')?.value || '';
+                    const messageId = headers.find(h => h.name?.toLowerCase() === 'message-id')?.value || '';
                     const threadId = response.data.threadId || '';
 
                     // Extract email content using the recursive function
@@ -664,7 +685,7 @@ async function main() {
                         content: [
                             {
                                 type: "text",
-                                text: `Thread ID: ${threadId}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}\nDate: ${date}\n\n${contentTypeNote}${body}${attachmentInfo}`,
+                                text: `Thread ID: ${threadId}\nMessage-ID: ${messageId}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}\n${cc ? 'Cc: ' + cc + '\n' : ''}Date: ${date}\n\n${contentTypeNote}${body}${attachmentInfo}`,
                             },
                         ],
                     };
