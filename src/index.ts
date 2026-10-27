@@ -17,6 +17,7 @@ import http from 'http';
 import open from 'open';
 import os from 'os';
 import {createEmailMessage, createEmailWithNodemailer} from "./utl.js";
+import { applyQuote } from "./quote.js";
 import { createLabel, updateLabel, deleteLabel, listLabels, findLabelByName, getOrCreateLabel, GmailLabel } from "./label-manager.js";
 import { createFilter, listFilters, getFilter, deleteFilter, filterTemplates, GmailFilterCriteria, GmailFilterAction } from "./filter-manager.js";
 
@@ -202,6 +203,8 @@ const SendEmailSchema = z.object({
     threadId: z.string().optional().describe("Thread ID to reply to"),
     inReplyTo: z.string().optional().describe("Message ID being replied to"),
     attachments: z.array(z.string()).optional().describe("List of file paths to attach to the email"),
+    quoteOriginal: z.boolean().optional().describe("Default true. When threadId or inReplyTo is set, the previous message is appended Gmail-style: 'On ... wrote:' for replies, or a '---------- Forwarded message ---------' block (plus the original attachments) when the subject starts with 'Fwd:'. Write only your new text in body; do not paste the old message yourself. Set false to send without the quote."),
+    quoteMessageId: z.string().optional().describe("Gmail message ID to quote or forward. Defaults to inReplyTo, otherwise the latest non-draft message in threadId."),
 });
 
 const ReadEmailSchema = z.object({
@@ -350,7 +353,7 @@ async function main() {
             },
             {
                 name: "draft_email",
-                description: "Draft a new email",
+                description: "Draft a new email. With threadId or inReplyTo it becomes a reply (or a forward if the subject starts with 'Fwd:') and the previous message is quoted below the body automatically, as Gmail's Reply/Forward would.",
                 inputSchema: zodToJsonSchema(SendEmailSchema),
             },
             {
@@ -448,6 +451,12 @@ async function main() {
             let message: string;
 
             try {
+                // Quote the previous message the way Gmail's Reply/Forward does.
+                // Runs before inReplyTo resolution because it needs the Gmail message ID.
+                const quote = await applyQuote(gmail, validatedArgs)
+                    .catch((e: any) => ({ applied: false, note: `Quote FAILED, draft has no quoted history: ${e.message}` }));
+                const quoteNote = quote.note ? `\n${quote.note}` : '';
+
                 // Auto-resolve inReplyTo: if it doesn't look like an RFC Message-ID,
                 // treat it as a Gmail message ID and look up the real Message-ID header
                 if (validatedArgs.inReplyTo && !validatedArgs.inReplyTo.startsWith('<')) {
@@ -467,8 +476,8 @@ async function main() {
                         // If lookup fails, keep original value
                     }
                 }
-                // Check if we have attachments
-                if (validatedArgs.attachments && validatedArgs.attachments.length > 0) {
+                // Check if we have attachments (quoted messages also go through Nodemailer for HTML + inline images)
+                if ((validatedArgs.attachments && validatedArgs.attachments.length > 0) || quote.applied) {
                     // Use Nodemailer to create properly formatted RFC822 message
                     message = await createEmailWithNodemailer(validatedArgs);
                     
@@ -490,7 +499,7 @@ async function main() {
                             content: [
                                 {
                                     type: "text",
-                                    text: `Email sent successfully with ID: ${result.data.id}`,
+                                    text: `Email sent successfully with ID: ${result.data.id}${quoteNote}`,
                                 },
                             ],
                         };
@@ -516,7 +525,7 @@ async function main() {
                             content: [
                                 {
                                     type: "text",
-                                    text: `Email draft created successfully with ID: ${response.data.id}`,
+                                    text: `Email draft created successfully with ID: ${response.data.id}${quoteNote}`,
                                 },
                             ],
                         };
@@ -554,7 +563,7 @@ async function main() {
                             content: [
                                 {
                                     type: "text",
-                                    text: `Email sent successfully with ID: ${response.data.id}`,
+                                    text: `Email sent successfully with ID: ${response.data.id}${quoteNote}`,
                                 },
                             ],
                         };
@@ -569,7 +578,7 @@ async function main() {
                             content: [
                                 {
                                     type: "text",
-                                    text: `Email draft created successfully with ID: ${response.data.id}`,
+                                    text: `Email draft created successfully with ID: ${response.data.id}${quoteNote}`,
                                 },
                             ],
                         };

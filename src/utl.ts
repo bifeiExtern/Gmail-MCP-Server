@@ -113,8 +113,8 @@ export async function createEmailWithNodemailer(validatedArgs: any): Promise<str
     });
 
     // Prepare attachments for nodemailer
-    const attachments = [];
-    for (const filePath of validatedArgs.attachments) {
+    const attachments: any[] = [];
+    for (const filePath of validatedArgs.attachments || []) {
         if (!fs.existsSync(filePath)) {
             throw new Error(`File does not exist: ${filePath}`);
         }
@@ -127,6 +127,11 @@ export async function createEmailWithNodemailer(validatedArgs: any): Promise<str
         });
     }
 
+    // Original attachments and inline images carried over by applyQuote
+    for (const a of validatedArgs.quoteAttachments || []) {
+        attachments.push(a);
+    }
+
     const mailOptions = {
         from: 'me', // Gmail API will replace this with the authenticated user
         to: validatedArgs.to.join(', '),
@@ -137,7 +142,7 @@ export async function createEmailWithNodemailer(validatedArgs: any): Promise<str
         html: validatedArgs.htmlBody,
         attachments: attachments,
         inReplyTo: validatedArgs.inReplyTo,
-        references: validatedArgs.inReplyTo
+        references: validatedArgs.references || validatedArgs.inReplyTo
     };
 
     // Generate the raw message
